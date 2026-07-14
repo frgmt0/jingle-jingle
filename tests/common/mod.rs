@@ -52,24 +52,19 @@ impl TestVault {
             .success();
     }
 
-    /// Shell invocation that writes the value of `var` to `outfile`,
-    /// portable across the CI matrix.
-    pub fn dump_env_command(var: &str, outfile: &str) -> Vec<String> {
+    /// Shell invocation that prints the value of env var `var` to stdout
+    /// (which `jingle exec` passes through, so tests assert on captured
+    /// stdout). Multi-arg on Windows: cmd.exe cannot parse the
+    /// backslash-escaped quotes Rust's process spawning produces, so no
+    /// single argument may contain spaces or quotes.
+    pub fn echo_env_command(var: &str) -> Vec<String> {
         #[cfg(unix)]
         {
-            vec![
-                "sh".into(),
-                "-c".into(),
-                format!("printf %s \"${var}\" > \"{outfile}\""),
-            ]
+            vec!["sh".into(), "-c".into(), format!("printf %s \"${var}\"")]
         }
         #[cfg(windows)]
         {
-            vec![
-                "cmd".into(),
-                "/C".into(),
-                format!("echo %{var}%>\"{outfile}\""),
-            ]
+            vec!["cmd".into(), "/C".into(), "echo".into(), format!("%{var}%")]
         }
     }
 }

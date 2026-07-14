@@ -7,16 +7,16 @@ use predicates::prelude::*;
 fn injects_secret_into_child_env() {
     let tv = TestVault::new();
     tv.add_with_secret("github", "sup3r-s3cret-value");
-    let outfile = tv.dir.path().join("dump.txt");
-    let shell = TestVault::dump_env_command("GH_PASS", &outfile.display().to_string());
+    let shell = TestVault::echo_env_command("GH_PASS");
 
     let mut cmd = tv.cmd();
     cmd.args(["exec", "-s", "github=GH_PASS", "--"]);
     cmd.args(&shell);
-    cmd.assert().success();
-
-    let dumped = std::fs::read_to_string(&outfile).unwrap();
-    assert_eq!(dumped.trim(), "sup3r-s3cret-value");
+    let out = cmd.assert().success().get_output().clone();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "sup3r-s3cret-value"
+    );
 }
 
 #[test]
@@ -29,16 +29,12 @@ fn maps_specific_fields() {
         .assert()
         .success();
 
-    let outfile = tv.dir.path().join("dump.txt");
-    let shell = TestVault::dump_env_command("K", &outfile.display().to_string());
+    let shell = TestVault::echo_env_command("K");
     let mut cmd = tv.cmd();
     cmd.args(["exec", "-s", "acct:api_key=K", "--"]);
     cmd.args(&shell);
-    cmd.assert().success();
-    assert_eq!(
-        std::fs::read_to_string(&outfile).unwrap().trim(),
-        "the-api-key"
-    );
+    let out = cmd.assert().success().get_output().clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "the-api-key");
 }
 
 #[cfg(unix)]
@@ -71,9 +67,8 @@ fn propagates_child_exit_code() {
 #[test]
 fn refuses_env_collision_without_allow_overwrite() {
     let tv = TestVault::new();
-    tv.add_with_secret("e", "s");
-    let outfile = tv.dir.path().join("dump.txt");
-    let shell = TestVault::dump_env_command("COLLIDE", &outfile.display().to_string());
+    tv.add_with_secret("e", "stored-collide-value");
+    let shell = TestVault::echo_env_command("COLLIDE");
 
     let mut cmd = tv.cmd();
     cmd.env("COLLIDE", "pre-existing");
@@ -88,8 +83,11 @@ fn refuses_env_collision_without_allow_overwrite() {
     cmd.env("COLLIDE", "pre-existing");
     cmd.args(["exec", "--allow-overwrite", "-s", "e=COLLIDE", "--"]);
     cmd.args(&shell);
-    cmd.assert().success();
-    assert_eq!(std::fs::read_to_string(&outfile).unwrap().trim(), "s");
+    let out = cmd.assert().success().get_output().clone();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "stored-collide-value"
+    );
 }
 
 #[test]
@@ -98,8 +96,7 @@ fn locked_entries_refuse_and_confirm() {
     tv.add_with_secret("prod", "prod-secret");
     tv.cmd().args(["lock", "prod"]).assert().success();
 
-    let outfile = tv.dir.path().join("dump.txt");
-    let shell = TestVault::dump_env_command("P", &outfile.display().to_string());
+    let shell = TestVault::echo_env_command("P");
 
     let mut cmd = tv.cmd();
     cmd.args(["exec", "-s", "prod=P", "--"]);
@@ -107,30 +104,30 @@ fn locked_entries_refuse_and_confirm() {
     cmd.assert()
         .failure()
         .code(5)
-        .stderr(predicate::str::contains("locked"));
-    assert!(!outfile.exists(), "child must not run on refusal");
+        .stderr(predicate::str::contains("locked"))
+        .stdout(predicate::str::contains("prod-secret").not()); // child must not run
 
     // Confirmation must repeat the exact name; a different name doesn't count.
     let mut cmd = tv.cmd();
     cmd.args(["exec", "--confirm-locked", "other", "-s", "prod=P", "--"]);
     cmd.args(&shell);
-    cmd.assert().failure().code(5);
+    cmd.assert()
+        .failure()
+        .code(5)
+        .stdout(predicate::str::contains("prod-secret").not());
 
     let mut cmd = tv.cmd();
     cmd.args(["exec", "--confirm-locked", "prod", "-s", "prod=P", "--"]);
     cmd.args(&shell);
-    cmd.assert().success();
-    assert_eq!(
-        std::fs::read_to_string(&outfile).unwrap().trim(),
-        "prod-secret"
-    );
+    let out = cmd.assert().success().get_output().clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "prod-secret");
 }
 
 #[test]
 fn unknown_entry_or_field_is_exit_3() {
     let tv = TestVault::new();
     tv.add_with_secret("known", "s");
-    let shell = TestVault::dump_env_command("X", "unused.txt");
+    let shell = TestVault::echo_env_command("X");
 
     let mut cmd = tv.cmd();
     cmd.args(["exec", "-s", "missing=X", "--"]);
